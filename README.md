@@ -184,8 +184,14 @@ The first time a session calls a web tool, Claude Code asks for permission, as i
 tool. Choose "always allow" if you would rather not be asked again. Ossify does not modify your
 settings to pre-approve internet access.
 
-Verified end to end on both models. gpt-oss searched, read a page and cited its source in 128
-seconds over two turns.
+Verified end to end on both models, each searching, reading a page and citing its source:
+
+| launcher | turns | wall time |
+|---|---|---|
+| `gptoss` | 2 | 128 s |
+| `qwen35` | 2 | 298 s |
+
+Most of that is the one-time system-prompt prefill, not the web work.
 
 ```powershell
 gptoss --oss-web "rust borrow checker"   # exercise the tools without starting Claude Code
