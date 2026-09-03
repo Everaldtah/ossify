@@ -150,6 +150,7 @@ src/cli.mjs      up | tune | plan | status | unload | bench | doctor
 src/plan.mjs     VRAM/RAM planner and candidate generator
 src/gguf.mjs     GGUF header reader (tensor sizes, KV geometry)
 src/lmstudio.mjs LM Studio driver (server, resolve, load with raw-field injection, benchmark)
+src/proxy.mjs    shim proxy on :20130 (Anthropic request fixups, streamed through)
 src/sys.mjs      hardware probe (nvidia-smi, RAM, CPU, LM Studio settings)
 install.ps1      installer
 ```
