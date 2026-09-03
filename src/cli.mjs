@@ -162,17 +162,26 @@ function readTuned(ctx) {
 
 const PROXY_PORT = parseInt(process.env.OSSIFY_PROXY_PORT || "20130", 10);
 
-async function proxyUp() {
-  try { const r = await fetch(`http://127.0.0.1:${PROXY_PORT}/ossify/health`, { signal: AbortSignal.timeout(1500) }); return r.ok; } catch { return false; }
+async function proxyHealth() {
+  try { const r = await fetch(`http://127.0.0.1:${PROXY_PORT}/ossify/health`, { signal: AbortSignal.timeout(1500) }); return r.ok ? await r.json() : null; } catch { return null; }
 }
+const proxyUp = async () => !!(await proxyHealth());
 
 // The shim proxy (src/proxy.mjs) rewrites the few request shapes LM Studio's Anthropic endpoint
-// rejects. It is started detached once and survives across Claude Code sessions.
+// rejects. It is started detached once and survives across Claude Code sessions. A proxy left over
+// from an older install is asked to quit so the current rewriting logic is the one in use.
 async function ensureProxy(ctx) {
-  if (await proxyUp()) return;
   const { spawn } = await import("node:child_process");
   const { fileURLToPath } = await import("node:url");
   const script = fileURLToPath(new URL("./proxy.mjs", import.meta.url));
+  const { PROXY_VERSION } = await import("./proxy.mjs").catch(() => ({ PROXY_VERSION: null }));
+  const health = await proxyHealth();
+  if (health) {
+    if (health.version === PROXY_VERSION && health.target === ctx.info.port) return;
+    log(`replacing shim proxy (version ${health.version ?? "?"} -> ${PROXY_VERSION})`);
+    await fetch(`http://127.0.0.1:${PROXY_PORT}/ossify/quit`).catch(() => {});
+    for (let i = 0; i < 20 && (await proxyUp()); i++) await new Promise((r) => setTimeout(r, 250));
+  }
   const child = spawn(process.execPath, [script, "--port", String(PROXY_PORT), "--target", String(ctx.info.port)], { detached: true, stdio: "ignore", windowsHide: true });
   child.unref();
   for (let i = 0; i < 20; i++) { if (await proxyUp()) { log(`shim proxy started on :${PROXY_PORT} (pid ${child.pid})`); return; } await new Promise((r) => setTimeout(r, 250)); }

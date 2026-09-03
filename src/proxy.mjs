@@ -16,6 +16,8 @@ const opt = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && args[
 const PORT = parseInt(opt("port", process.env.OSSIFY_PROXY_PORT || "20130"), 10);
 const TARGET = parseInt(opt("target", process.env.OSSIFY_LMS_PORT || "1234"), 10);
 const DROP_FIELDS = ["thinking", "context_management", "output_config", "betas"];
+// Bump when the rewriting logic changes: `ossify up` replaces a running proxy whose version differs.
+export const PROXY_VERSION = 2;
 
 function normalizeMessages(body) {
   if (!Array.isArray(body.messages)) return body;
@@ -47,7 +49,8 @@ function estimateTokens(body) {
 }
 
 const server = http.createServer((req, res) => {
-  if (req.url === "/ossify/health") { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ ok: true, target: TARGET, pid: process.pid })); }
+  if (req.url === "/ossify/health") { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ ok: true, target: TARGET, pid: process.pid, version: PROXY_VERSION })); }
+  if (req.url === "/ossify/quit") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true })); return setTimeout(() => process.exit(0), 50); }
   const chunks = [];
   req.on("data", (c) => chunks.push(c));
   req.on("end", () => {
@@ -71,11 +74,19 @@ const server = http.createServer((req, res) => {
       res.writeHead(502, { "content-type": "application/json" });
       res.end(JSON.stringify({ type: "error", error: { type: "api_error", message: `ossify proxy: LM Studio unreachable on :${TARGET} (${e.message})` } }));
     });
-    req.on("close", () => { if (!up.destroyed && !res.writableEnded) up.destroy(); });
+    // Abort upstream only when the CLIENT goes away mid-response. Note: `req.on("close")` is wrong
+    // here - Node fires it as soon as the request body has been fully read, which would kill the
+    // upstream socket before LM Studio ever replies ("socket hang up").
+    res.on("close", () => { if (!res.writableFinished && !up.destroyed) up.destroy(); });
     up.end(bodyBuf);
   });
 });
 server.keepAliveTimeout = 0;
 server.headersTimeout = 0;
 server.requestTimeout = 0;
-server.listen(PORT, "127.0.0.1", () => console.log(`[ossify-proxy] listening on http://127.0.0.1:${PORT} -> LM Studio :${TARGET}`));
+
+// Only listen when run directly - cli.mjs imports this module just to read PROXY_VERSION.
+const self = process.argv[1] && `file:///${process.argv[1].replace(/\\/g, "/")}`;
+if (import.meta.url === self) {
+  server.listen(PORT, "127.0.0.1", () => console.log(`[ossify-proxy] listening on http://127.0.0.1:${PORT} -> LM Studio :${TARGET}`));
+}
