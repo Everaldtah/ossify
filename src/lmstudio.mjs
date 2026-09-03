@@ -71,7 +71,13 @@ export async function resolveModel(lms, key, modelsDir) {
     if (!hit) throw new Error(`Could not locate the GGUF file for ${m.modelKey} under ${modelsDir}`);
     file = hit;
   }
-  return { ...m, file, format: m.format };
+  // LM Studio also loads a sibling vision projector (mmproj-*.gguf) onto the GPU for VLMs.
+  let mmprojBytes = 0;
+  try {
+    const dir = file.slice(0, Math.max(file.lastIndexOf("\\"), file.lastIndexOf("/")));
+    for (const e of readdirSync(dir)) if (/^mmproj.*\.gguf$/i.test(e)) mmprojBytes += statSync(join(dir, e)).size;
+  } catch { /* ignore */ }
+  return { ...m, file, format: m.format, mmprojBytes };
 }
 
 export async function listLoaded(lms) {

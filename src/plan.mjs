@@ -23,8 +23,10 @@ export function estimateVram(s, cfg) {
   const expertLayersOnGpu = Math.max(0, gpuLayers - Math.round(cfg.cpuExpertRatio * s.nLayer));
   const experts = s.expertBytesPerLayer * expertLayersOnGpu;
   const staging = expertLayersOnGpu < s.nLayer ? MOE_STAGING : 0;
-  const total = CUDA_CONTEXT + denseOnGpu + experts + kv + computeBuffer(cfg.evalBatchSize) + staging;
-  return { total, kv, denseOnGpu, experts, expertLayersOnGpu, gpuLayers, staging, compute: computeBuffer(cfg.evalBatchSize) };
+  // Vision-language models: LM Studio loads the mmproj projector on the GPU too (+ its own compute buffer).
+  const mmproj = s.mmprojBytes ? s.mmprojBytes + 260 * MiB : 0;
+  const total = CUDA_CONTEXT + denseOnGpu + experts + kv + computeBuffer(cfg.evalBatchSize) + staging + mmproj;
+  return { total, kv, denseOnGpu, experts, expertLayersOnGpu, gpuLayers, staging, mmproj, compute: computeBuffer(cfg.evalBatchSize) };
 }
 
 export function estimateRam(s, cfg, est) {
@@ -63,7 +65,7 @@ export function candidates(s, { budgetBytes, ramFreeBytes, ctxTarget = 65536, mi
       }
       if (!found) continue;
       out.push({ id: `experts-cpu${found.cpuLayers}/${s.nLayer}-c${ctx / 1024}k`, strategy: "experts-cpu", ...found });
-      if (deep && found.cpuLayers < s.nLayer) {
+      if (found.cpuLayers < s.nLayer) { // one layer safer - the tuner penalises tight VRAM headroom
         const cfg = { ...base, contextLength: ctx, cpuExpertRatio: ratioFor(found.cpuLayers + 1, s.nLayer) };
         out.push({ id: `experts-cpu${found.cpuLayers + 1}/${s.nLayer}-c${ctx / 1024}k`, strategy: "experts-cpu", cfg, est: estimateVram(s, cfg), cpuLayers: found.cpuLayers + 1 });
       }

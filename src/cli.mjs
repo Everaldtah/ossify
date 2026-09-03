@@ -59,6 +59,7 @@ async function analyze() {
   const sys = snapshot();
   const m = await resolveModel(lms, modelKey, sys.lmstudio.modelsDir);
   const s = summarize(await readGguf(m.file));
+  s.mmprojBytes = m.mmprojBytes || 0;
   return budgets({ sys, info, lms, m, s });
 }
 
@@ -132,7 +133,9 @@ async function runTune(ctx, { deep = false } = {}) {
       const b = { ppTps: Math.max(b1.ppTps, b2.ppTps), tgTps: Math.max(b1.tgTps, b2.tgTps), ttftSec: Math.min(b1.ttftSec, b2.ttftSec), numGpuLayers: b2.numGpuLayers, promptTokens: b2.promptTokens };
       const gpuAfter = snapshot().gpu;
       // q4_0 KV cache trades accuracy over long contexts for speed: only let it win when clearly faster.
-      const score = turnSeconds(b) * (cand.strategy.includes("kvq4") ? 1.15 : 1);
+      // Tight VRAM headroom (< 450 MiB) risks spilling during long prefills: prefer a safer placement unless it is much slower.
+      const headroomMiB = gpuAfter ? gpuAfter.totalMiB - gpuAfter.usedMiB : Infinity;
+      const score = turnSeconds(b) * (cand.strategy.includes("kvq4") ? 1.15 : 1) * (headroomMiB < 450 ? 1.12 : 1);
       results.push({ id: cand.id, strategy: cand.strategy, cfg: cand.cfg, est: cand.est, bench: b, score, vramUsedMiB: gpuAfter?.usedMiB });
       console.log(`  ${cand.id.padEnd(34)} prefill ${b.ppTps.toFixed(0).padStart(5)} tok/s   gen ${b.tgTps.toFixed(1).padStart(5)} tok/s   turn ${score.toFixed(1)}s   vram-used ${gpuAfter ? fmtMiB(gpuAfter.usedMiB) : "?"}`);
       await ctx.lms.llm.unload(model.identifier);
