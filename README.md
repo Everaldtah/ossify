@@ -40,7 +40,13 @@ left). Ossify instead:
 4. **Refuses to load** when the plan would eat into the RAM headroom (default 4 GB), and tells
    you how much to free instead of freezing the machine.
 5. **Hands the model to Claude Code** through LM Studio's native Anthropic-compatible
-   `/v1/messages` endpoint (no proxy), with the auto-compact window matched to the context.
+   `/v1/messages` endpoint, behind a 100-line shim proxy (`src/proxy.mjs`, port 20130) that
+   fixes the few request shapes LM Studio rejects: Claude Code 2.1.x puts a `role: "system"`
+   reminder inside `messages` (LM Studio answers `Invalid discriminator value`), sends
+   `thinking` / `context_management` / `output_config`, and calls `/v1/messages/count_tokens`.
+   The proxy folds system-role messages into user-side `<system-reminder>` blocks (keeping strict
+   user/assistant alternation for chat templates), drops the unknown fields, estimates token
+   counts, and streams everything else through untouched.
 
 ### The SDK gotcha this project works around
 

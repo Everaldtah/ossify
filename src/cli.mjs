@@ -160,8 +160,27 @@ function readTuned(ctx) {
   try { const t = JSON.parse(readFileSync(p, "utf8")); return t.fingerprint === fingerprint(ctx.sys, ctx.s, ctxTarget) ? t : null; } catch { return null; }
 }
 
+const PROXY_PORT = parseInt(process.env.OSSIFY_PROXY_PORT || "20130", 10);
+
+async function proxyUp() {
+  try { const r = await fetch(`http://127.0.0.1:${PROXY_PORT}/ossify/health`, { signal: AbortSignal.timeout(1500) }); return r.ok; } catch { return false; }
+}
+
+// The shim proxy (src/proxy.mjs) rewrites the few request shapes LM Studio's Anthropic endpoint
+// rejects. It is started detached once and survives across Claude Code sessions.
+async function ensureProxy(ctx) {
+  if (await proxyUp()) return;
+  const { spawn } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const script = fileURLToPath(new URL("./proxy.mjs", import.meta.url));
+  const child = spawn(process.execPath, [script, "--port", String(PROXY_PORT), "--target", String(ctx.info.port)], { detached: true, stdio: "ignore", windowsHide: true });
+  child.unref();
+  for (let i = 0; i < 20; i++) { if (await proxyUp()) { log(`shim proxy started on :${PROXY_PORT} (pid ${child.pid})`); return; } await new Promise((r) => setTimeout(r, 250)); }
+  throw new Error(`shim proxy did not start on :${PROXY_PORT}`);
+}
+
 function writeCurrent(ctx, cand, extra = {}) {
-  const cur = { modelKey: ctx.m.modelKey, identifier: ctx.m.modelKey, port: ctx.info.port, baseUrl: `http://127.0.0.1:${ctx.info.port}`, contextLength: cand.cfg.contextLength, strategy: cand.strategy ?? cand.id, config: toLmsConfig(cand.cfg), bench: cand.bench ?? null, loadedAt: new Date().toISOString(), ...extra };
+  const cur = { modelKey: ctx.m.modelKey, identifier: ctx.m.modelKey, port: ctx.info.port, lmsUrl: `http://127.0.0.1:${ctx.info.port}`, baseUrl: `http://127.0.0.1:${PROXY_PORT}`, contextLength: cand.cfg.contextLength, strategy: cand.strategy ?? cand.id, config: toLmsConfig(cand.cfg), bench: cand.bench ?? null, loadedAt: new Date().toISOString(), ...extra };
   writeFileSync(currentPath, JSON.stringify(cur, null, 2));
   return cur;
 }
@@ -184,6 +203,7 @@ const commands = {
       const cur = JSON.parse(readFileSync(currentPath, "utf8"));
       if (cur.modelKey === ctx.m.modelKey && cur.contextLength === ctxTarget) {
         log(`${ctx.m.modelKey} already loaded (${cur.strategy}, ctx ${cur.contextLength}). Reusing.`);
+        await ensureProxy(ctx);
         writeCurrent(ctx, { cfg: { contextLength: cur.contextLength, ...cur.config }, strategy: cur.strategy, bench: cur.bench }, { reused: true });
         return;
       }
@@ -205,6 +225,7 @@ const commands = {
     if (needRam > ctx.ramFreeBytes) throw new Error(`Refusing to load: needs ~${fmtGB(needRam)} RAM but only ${fmtGB(ctx.sys.ram.freeBytes)} is free (keeping ${fmtGB(RAM_MARGIN)} headroom). Close some apps first.`);
     if (ctx.sys.gpu && est.total > ctx.budgetBytes) log(`Warning: plan wants ${fmtGB(est.total)} VRAM, budget is ${fmtGB(ctx.budgetBytes)} - the GPU is busier than at tuning time; expect slower speed.`);
     await loadWith(ctx, cand, { ttl: ttl > 0 ? ttl : undefined });
+    await ensureProxy(ctx);
     const after = snapshot();
     const cur = writeCurrent(ctx, cand);
     console.log(`\n  ${ctx.m.modelKey}  ready on ${cur.baseUrl}   ctx ${cur.contextLength}   ${cand.strategy}`);
@@ -215,7 +236,7 @@ const commands = {
   async status() {
     const sys = snapshot();
     const up = await serverUp(sys.lmstudio.port);
-    console.log(`LM Studio server: ${up ? `up on :${sys.lmstudio.port}` : "down"}   backend ${sys.lmstudio.backend}`);
+    console.log(`LM Studio server: ${up ? `up on :${sys.lmstudio.port}` : "down"}   backend ${sys.lmstudio.backend}   shim proxy :${PROXY_PORT} ${(await proxyUp()) ? "up" : "down"}`);
     console.log(`GPU: ${sys.gpu ? `${sys.gpu.name}  ${fmtMiB(sys.gpu.usedMiB)} used / ${fmtMiB(sys.gpu.totalMiB)}` : "none"}   RAM free ${fmtGB(sys.ram.freeBytes)} / ${fmtGB(sys.ram.totalBytes)}`);
     if (up) {
       const loaded = await listLoaded(client(sys.lmstudio.port));
