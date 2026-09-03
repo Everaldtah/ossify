@@ -1,0 +1,21 @@
+{
+  "name": "ossify",
+  "version": "0.1.0",
+  "description": "Run Claude Code on a local LM Studio model (gpt-oss-20b) with a VRAM-aware MoE loader and auto-tuner. Type `gptoss`.",
+  "type": "module",
+  "bin": { "ossify": "src/cli.mjs" },
+  "scripts": {
+    "plan": "node src/cli.mjs plan",
+    "tune": "node src/cli.mjs tune",
+    "up": "node src/cli.mjs up",
+    "status": "node src/cli.mjs status",
+    "doctor": "node src/cli.mjs doctor"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@lmstudio/sdk": "^1.5.0"
+  },
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Everaldtah/ossify" },
+  "keywords": ["claude-code", "lm-studio", "gpt-oss", "local-llm", "moe", "llama.cpp", "vram"]
+}
