@@ -171,6 +171,21 @@ Fourteen tasks in three groups, weighted by difficulty:
 - **instruction** - exact output formatting, and refusing to invent a constant that is not in the
   file (a hallucination probe).
 
+### gpt-oss-20b on the reference machine
+
+| group | passed | weighted | avg time |
+|---|---|---|---|
+| tools | 6/6 | 9/9 | 108 s |
+| coding | 5/6 | 12/14 | 126 s |
+| instruction | 2/2 | 3/3 | 64 s |
+| **total** | **13/14** | **24/26 (92%)** | 109 s |
+
+Tool calling was flawless, including a four-turn find-then-read chain and editing an existing
+file. The one failure was `code-parse`, where the model wrote a Python file ending in an
+unterminated triple-quoted string, so the module would not even import. That is worth knowing:
+the weak spot is long single-shot file writes, not reasoning. It also refused to invent a
+constant that was not in the file, which is the hallucination probe.
+
 Grading is objective, never model-judged. Code tasks are executed: the runner imports what the
 model wrote and asserts on real return values. Tool tasks check the file that was actually created
 or edited. Each task runs as its own Claude Code session so tasks cannot contaminate each other,
