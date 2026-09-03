@@ -73,14 +73,17 @@ Ryzen 5 5500 (6c/12t), 32 GB DDR4-3200, RTX 3050 6 GB, LM Studio 0.4.2, llama.cp
 | gpt-oss-20b, 64k ctx, classic layer split (5/24) | whole layers | 3.6 GB | ~10 GB | 275 tok/s | 14.1 tok/s |
 | gpt-oss-20b, 64k ctx, **Ossify** | dense + 3 expert layers on GPU, 21 expert layers in RAM, q8 KV | 5.0 GB | ~10 GB | **290 tok/s** | **20.1 tok/s** |
 | gpt-oss-20b, 64k ctx, Ossify `--oss-deep` q4 KV | dense + 5 expert layers on GPU | 5.1 GB | ~10 GB | 304 tok/s | 21.9 tok/s (quality tax, not chosen) |
-| Qwen3.5-35B-A3B, 32k ctx, classic layer split (5/40) | whole layers | 4.7 GB | ~19 GB | 131 tok/s | 11.4 tok/s |
-| Qwen3.5-35B-A3B, 32k ctx, **Ossify** | dense + vision projector + 3 expert layers on GPU, 37 expert layers in RAM, q8 KV | 5.6 GB | ~19 GB | **147 tok/s** | **27.7 tok/s** |
+| Qwen3.5-35B-A3B, 64k ctx, classic layer split (4/40) | whole layers | 4.2 GB | ~19 GB | 128 tok/s | 10.2 tok/s |
+| Qwen3.5-35B-A3B, 64k ctx, **Ossify** | dense + vision projector + 2 expert layers on GPU, 38 expert layers in RAM, q8 KV | 5.3 GB | ~19 GB | **144 tok/s** | **27.0 tok/s** |
 
 Qwen generates faster than gpt-oss despite being twice the size: 8 of 256 experts per token read
 fewer bytes from RAM than gpt-oss's 4 of 32. Prefill is the opposite - CPU-resident experts are
 streamed through the GPU per 512-token micro-batch, so bigger expert tables cost more per batch.
-Claude Code's first turn (~20k tokens of system prompt and tools) therefore takes about a
-minute; later turns reuse LM Studio's prompt cache and only process the delta.
+Claude Code's first turn (18k-23k tokens of system prompt and tools) therefore takes one to three
+minutes; later turns reuse LM Studio's prompt cache and only process the delta.
+
+Both models beat the classic whole-layer split by a wide margin on generation (20.1 vs 14.1, and
+27.0 vs 10.2 tok/s) because the layers that stay on the GPU are the ones every token touches.
 
 `gptoss --oss-status` prints the numbers measured on *your* machine.
 
