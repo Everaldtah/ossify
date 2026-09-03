@@ -2,6 +2,6 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
-bench/.work/
+bench/.work*/
 bench/result-*.json
 __pycache__/

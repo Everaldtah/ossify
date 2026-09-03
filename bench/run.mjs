@@ -36,8 +36,13 @@ const claudeExe = process.env.OSSIFY_CLAUDE || join(homedir(), ".local", "bin", 
 if (!existsSync(claudeExe)) { console.error(`claude.exe not found at ${claudeExe}. Set OSSIFY_CLAUDE.`); process.exit(2); }
 
 const pythonExe = process.env.OSSIFY_PYTHON || "python";
-const outRoot = join(REPO, "bench", ".work");
-if (!KEEP && existsSync(outRoot)) rmSync(outRoot, { recursive: true, force: true });
+// Windows keeps handles open on directories a moment after a child exits, so a plain rm can throw
+// EBUSY. Retry, then fall back to a fresh timestamped root rather than failing the whole run.
+let outRoot = join(REPO, "bench", ".work");
+if (!KEEP && existsSync(outRoot)) {
+  try { rmSync(outRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 }); }
+  catch { outRoot = join(REPO, "bench", `.work-${Date.now().toString(36)}`); }
+}
 mkdirSync(outRoot, { recursive: true });
 
 // Same provider wiring the gptoss/qwen35 launchers use, applied to the child only.
