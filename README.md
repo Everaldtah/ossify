@@ -16,6 +16,12 @@ PS> gptoss --oss-unload         # free VRAM and RAM
 Plain `claude` is untouched: the provider environment is set only for the child process and
 restored afterwards.
 
+Verified end to end on the reference machine: `gptoss -p "read src/gguf.mjs and explain kvBytes"`
+completed a full two-turn agent loop (model calls `Read`, gets the file back, answers correctly)
+in 92 s, with 18,141 tokens served from LM Studio's prompt cache on the second turn.
+Claude Code prints a dollar cost and an `unrecognized_model` notice for local models; both are
+cosmetic, nothing leaves the machine and nothing is billed.
+
 ## Why a loader at all
 
 Mixture-of-experts models such as gpt-oss-20b (12 GB, 24 layers x 32 experts, 4 active) and
