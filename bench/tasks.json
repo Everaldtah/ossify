@@ -1,101 +1,130 @@
 {
-  "note": "Each task runs as a real Claude Code turn against the loaded local model. `check` rules are applied to the final answer text and to the files the model wrote. Keep prompts short: every token here is prefill.",
+  "note": "Each task runs as a real Claude Code turn against the loaded local model, with the task's own scratch directory as the working directory and a private copy of bench/fixtures inside it. Prompts therefore use short relative paths only - no absolute paths, which small models mangle. `check` rules are applied to the final answer and to the files the model wrote.",
   "tasks": [
     {
       "id": "tool-read",
       "group": "tools",
       "weight": 1,
-      "prompt": "Read the file bench/fixtures/inventory.py and reply with ONLY the name of the single function defined in it. No explanation.",
+      "prompt": "Read the file fixtures/inventory.py and reply with ONLY the name of the single function defined in it. No explanation.",
       "allowedTools": "Read,Glob,Grep",
-      "check": { "answerMatches": "restock_plan", "answerNotMatches": "\\b(cannot|unable|don't have access)\\b" }
+      "check": {
+        "answerMatches": "restock_plan",
+        "answerNotMatches": "\\b(cannot|unable|don't have access)\\b"
+      }
     },
     {
       "id": "tool-glob",
       "group": "tools",
       "weight": 1,
-      "prompt": "Using your tools, count how many .py files exist under bench/fixtures. Reply with ONLY that number.",
+      "prompt": "Using your tools, count how many .py files exist under fixtures. Reply with ONLY that number.",
       "allowedTools": "Read,Glob,Grep",
-      "check": { "answerMatches": "\\b3\\b" }
+      "check": {
+        "answerMatches": "\\b3\\b"
+      }
     },
     {
       "id": "tool-grep",
       "group": "tools",
       "weight": 1,
-      "prompt": "Search bench/fixtures for the exact string TODO-OSSIFY and reply with ONLY the file name that contains it.",
+      "prompt": "Search fixtures for the exact string TODO-OSSIFY and reply with ONLY the file name that contains it.",
       "allowedTools": "Read,Glob,Grep",
-      "check": { "answerMatches": "shipping\\.py" }
+      "check": {
+        "answerMatches": "shipping\\.py"
+      }
     },
     {
       "id": "tool-multi-step",
       "group": "tools",
       "weight": 2,
-      "prompt": "Find the file under bench/fixtures that defines a class named Warehouse, read it, and reply with ONLY the number of methods that class defines, counting __init__. No explanation.",
+      "prompt": "Find the file under fixtures that defines a class named Warehouse, read it, and reply with ONLY the number of methods that class defines, counting __init__. No explanation.",
       "allowedTools": "Read,Glob,Grep",
-      "check": { "answerMatches": "\\b4\\b" }
+      "check": {
+        "answerMatches": "\\b4\\b"
+      }
     },
     {
       "id": "tool-write",
       "group": "tools",
       "weight": 2,
-      "prompt": "Create a file at OUTDIR/greet.py containing exactly one function `greet(name)` that returns the string 'Hello, ' followed by the name. Then reply with only the word DONE.",
+      "prompt": "Create a file at greet.py containing exactly one function `greet(name)` that returns the string 'Hello, ' followed by the name. Then reply with only the word DONE.",
       "allowedTools": "Read,Write,Edit,Glob",
-      "check": { "fileExists": "greet.py", "python": "from greet import greet; assert greet('Ada') == 'Hello, Ada', greet('Ada')" }
+      "check": {
+        "fileExists": "greet.py",
+        "python": "from greet import greet; assert greet('Ada') == 'Hello, Ada', greet('Ada')"
+      }
     },
     {
       "id": "tool-edit",
       "group": "tools",
       "weight": 2,
-      "prompt": "Copy bench/fixtures/shipping.py to OUTDIR/shipping.py, then in your copy replace the TODO-OSSIFY comment with a working implementation: the function must return the total weight of all items. Reply with only the word DONE.",
+      "prompt": "Copy fixtures/shipping.py to shipping.py, then in your copy replace the TODO-OSSIFY comment with a working implementation: the function must return the total weight of all items. Reply with only the word DONE.",
       "allowedTools": "Read,Write,Edit,Glob,Grep",
-      "check": { "fileExists": "shipping.py", "python": "from shipping import total_weight; assert total_weight([{'w': 2}, {'w': 3.5}]) == 5.5, total_weight([{'w': 2}, {'w': 3.5}])" }
+      "check": {
+        "fileExists": "shipping.py",
+        "python": "from shipping import total_weight; assert total_weight([{'w': 2}, {'w': 3.5}]) == 5.5, total_weight([{'w': 2}, {'w': 3.5}])"
+      }
     },
     {
       "id": "code-fizzbuzz",
       "group": "coding",
       "weight": 1,
-      "prompt": "Write OUTDIR/fizz.py defining fizzbuzz(n) that returns a list of length n: for 1..n give 'Fizz' for multiples of 3, 'Buzz' for multiples of 5, 'FizzBuzz' for both, otherwise the number as an int. Reply with only DONE.",
+      "prompt": "Write fizz.py defining fizzbuzz(n) that returns a list of length n: for 1..n give 'Fizz' for multiples of 3, 'Buzz' for multiples of 5, 'FizzBuzz' for both, otherwise the number as an int. Reply with only DONE.",
       "allowedTools": "Write,Read,Edit",
-      "check": { "python": "from fizz import fizzbuzz; r = fizzbuzz(15); assert r[0] == 1 and r[2] == 'Fizz' and r[4] == 'Buzz' and r[14] == 'FizzBuzz' and len(r) == 15, r" }
+      "check": {
+        "python": "from fizz import fizzbuzz; r = fizzbuzz(15); assert r[0] == 1 and r[2] == 'Fizz' and r[4] == 'Buzz' and r[14] == 'FizzBuzz' and len(r) == 15, r"
+      }
     },
     {
       "id": "code-parse",
       "group": "coding",
       "weight": 2,
-      "prompt": "Write OUTDIR/parse.py defining parse_kv(text) that parses lines of 'key=value' into a dict. Ignore blank lines and lines starting with #. Strip whitespace around keys and values. A value containing '=' keeps everything after the first '='. Reply with only DONE.",
+      "prompt": "Write parse.py defining parse_kv(text) that parses lines of 'key=value' into a dict. Ignore blank lines and lines starting with #. Strip whitespace around keys and values. A value containing '=' keeps everything after the first '='. Reply with only DONE.",
       "allowedTools": "Write,Read,Edit",
-      "check": { "python": "from parse import parse_kv; r = parse_kv('a=1\\n\\n# c=2\\n b = x=y \\n'); assert r == {'a': '1', 'b': 'x=y'}, r" }
+      "check": {
+        "python": "from parse import parse_kv; r = parse_kv('a=1\\n\\n# c=2\\n b = x=y \\n'); assert r == {'a': '1', 'b': 'x=y'}, r"
+      }
     },
     {
       "id": "code-bugfix",
       "group": "coding",
       "weight": 3,
-      "prompt": "Copy bench/fixtures/inventory.py to OUTDIR/inventory.py. The function restock_plan has a bug: it is meant to return items whose stock is STRICTLY BELOW the threshold, sorted by stock ascending, but it returns the wrong ones. Fix your copy. Reply with only DONE.",
+      "prompt": "Copy fixtures/inventory.py to inventory.py. The function restock_plan has a bug: it is meant to return items whose stock is STRICTLY BELOW the threshold, sorted by stock ascending, but it returns the wrong ones. Fix your copy. Reply with only DONE.",
       "allowedTools": "Read,Write,Edit,Grep",
-      "check": { "fileExists": "inventory.py", "python": "from inventory import restock_plan; r = restock_plan([{'sku':'a','stock':5},{'sku':'b','stock':1},{'sku':'c','stock':9}], 5); assert [x['sku'] for x in r] == ['b'], r" }
+      "check": {
+        "fileExists": "inventory.py",
+        "python": "from inventory import restock_plan; r = restock_plan([{'sku':'a','stock':5},{'sku':'b','stock':1},{'sku':'c','stock':9}], 5); assert [x['sku'] for x in r] == ['b'], r"
+      }
     },
     {
       "id": "code-edge-cases",
       "group": "coding",
       "weight": 3,
-      "prompt": "Write OUTDIR/chunk.py defining chunk(items, size) that splits a list into consecutive lists of length size, the last one shorter if needed. Raise ValueError if size < 1. An empty list returns an empty list. Reply with only DONE.",
+      "prompt": "Write chunk.py defining chunk(items, size) that splits a list into consecutive lists of length size, the last one shorter if needed. Raise ValueError if size < 1. An empty list returns an empty list. Reply with only DONE.",
       "allowedTools": "Write,Read,Edit",
-      "check": { "python": "from chunk import chunk\nassert chunk([1,2,3,4,5], 2) == [[1,2],[3,4],[5]]\nassert chunk([], 3) == []\ntry:\n    chunk([1], 0); raise AssertionError('no ValueError')\nexcept ValueError: pass" }
+      "check": {
+        "python": "from chunk import chunk\nassert chunk([1,2,3,4,5], 2) == [[1,2],[3,4],[5]]\nassert chunk([], 3) == []\ntry:\n    chunk([1], 0); raise AssertionError('no ValueError')\nexcept ValueError: pass"
+      }
     },
     {
       "id": "code-refactor",
       "group": "coding",
       "weight": 3,
-      "prompt": "Copy bench/fixtures/warehouse.py to OUTDIR/warehouse.py. In your copy, add a method `low_stock(self, threshold)` to the Warehouse class returning a sorted list of skus whose quantity is strictly below threshold. Do not change existing behaviour. Reply with only DONE.",
+      "prompt": "Copy fixtures/warehouse.py to warehouse.py. In your copy, add a method `low_stock(self, threshold)` to the Warehouse class returning a sorted list of skus whose quantity is strictly below threshold. Do not change existing behaviour. Reply with only DONE.",
       "allowedTools": "Read,Write,Edit,Grep",
-      "check": { "fileExists": "warehouse.py", "python": "from warehouse import Warehouse\nw = Warehouse()\nw.add('b', 1); w.add('a', 9); w.add('c', 3)\nassert w.low_stock(5) == ['b','c'], w.low_stock(5)\nassert w.total() == 13, w.total()" }
+      "check": {
+        "fileExists": "warehouse.py",
+        "python": "from warehouse import Warehouse\nw = Warehouse()\nw.add('b', 1); w.add('a', 9); w.add('c', 3)\nassert w.low_stock(5) == ['b','c'], w.low_stock(5)\nassert w.total() == 13, w.total()"
+      }
     },
     {
       "id": "code-reasoning",
       "group": "coding",
       "weight": 2,
-      "prompt": "Write OUTDIR/roman.py defining to_roman(n) converting an integer 1-3999 to a Roman numeral string, and from_roman(s) doing the reverse. Reply with only DONE.",
+      "prompt": "Write roman.py defining to_roman(n) converting an integer 1-3999 to a Roman numeral string, and from_roman(s) doing the reverse. Reply with only DONE.",
       "allowedTools": "Write,Read,Edit",
-      "check": { "python": "from roman import to_roman, from_roman\nfor n, s in [(1,'I'),(4,'IV'),(9,'IX'),(14,'XIV'),(40,'XL'),(1987,'MCMLXXXVII'),(3999,'MMMCMXCIX')]:\n    assert to_roman(n) == s, (n, to_roman(n))\n    assert from_roman(s) == n, (s, from_roman(s))" }
+      "check": {
+        "python": "from roman import to_roman, from_roman\nfor n, s in [(1,'I'),(4,'IV'),(9,'IX'),(14,'XIV'),(40,'XL'),(1987,'MCMLXXXVII'),(3999,'MMMCMXCIX')]:\n    assert to_roman(n) == s, (n, to_roman(n))\n    assert from_roman(s) == n, (s, from_roman(s))"
+      }
     },
     {
       "id": "instruct-format",
@@ -103,15 +132,20 @@
       "weight": 1,
       "prompt": "Reply with exactly three words separated by single spaces and nothing else: alpha beta gamma",
       "allowedTools": "",
-      "check": { "answerMatches": "^\\s*alpha beta gamma\\s*$" }
+      "check": {
+        "answerMatches": "^\\s*alpha beta gamma\\s*$"
+      }
     },
     {
       "id": "instruct-refuse-guess",
       "group": "instruction",
       "weight": 2,
-      "prompt": "Read bench/fixtures/inventory.py and tell me what the constant MAX_PALLET_HEIGHT is set to. If it is not in the file, reply with exactly: NOT PRESENT",
+      "prompt": "Read fixtures/inventory.py and tell me what the constant MAX_PALLET_HEIGHT is set to. If it is not in the file, reply with exactly: NOT PRESENT",
       "allowedTools": "Read,Glob,Grep",
-      "check": { "answerMatches": "NOT PRESENT", "answerNotMatches": "\\b\\d+\\s*(cm|m|inches|feet)\\b" }
+      "check": {
+        "answerMatches": "NOT PRESENT",
+        "answerNotMatches": "\\b\\d+\\s*(cm|m|inches|feet)\\b"
+      }
     }
   ]
 }

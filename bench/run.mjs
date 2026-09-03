@@ -10,7 +10,7 @@
 //
 // Each task runs as its OWN Claude Code session, so tasks cannot contaminate each other. That
 // means every task pays the full system-prompt prefill, which is the honest cost of a first turn.
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -129,11 +129,16 @@ const results = [];
 for (const task of tasks) {
   for (let rep = 0; rep < REPEAT; rep++) {
     const label = REPEAT > 1 ? `${task.id}#${rep + 1}` : task.id;
+    // Each task gets its own directory AS its working directory, with a private copy of the
+    // fixtures inside it. Prompts then use short relative paths ("fixtures/inventory.py",
+    // "inventory.py"): absolute Windows paths in a prompt get mangled by smaller models, which
+    // scores a correct solution as a failure. The private copy also means a task that edits a
+    // fixture in place cannot affect any other task.
     const workDir = join(outRoot, label.replace(/[^a-z0-9-]+/gi, "_"));
     mkdirSync(workDir, { recursive: true });
+    cpSync(join(HERE, "fixtures"), join(workDir, "fixtures"), { recursive: true, filter: (s) => !s.includes("__pycache__") });
     process.stdout.write(`  ${label.padEnd(22)} running... `);
-    const prompt = task.prompt.replaceAll("OUTDIR", workDir.replace(/\\/g, "/"));
-    const res = await runClaude(prompt, task.allowedTools ?? "", REPO);
+    const res = await runClaude(task.prompt, task.allowedTools ?? "", workDir);
     const g = await grade(task, res, workDir);
     const turns = res.json?.num_turns ?? 0;
     console.log(`${g.pass ? "PASS" : "FAIL"}  ${res.secs.toFixed(0).padStart(4)}s  ${String(turns).padStart(2)} turns${g.pass ? "" : "   " + g.fails[0]}`);
