@@ -178,13 +178,26 @@ async function ensureProxy(ctx) {
   const health = await proxyHealth();
   if (health) {
     if (health.version === PROXY_VERSION && health.target === ctx.info.port) return;
-    log(`replacing shim proxy (version ${health.version ?? "?"} -> ${PROXY_VERSION})`);
+    log(`replacing shim proxy (version ${health.version ?? "pre-2"} -> ${PROXY_VERSION})`);
+    // Versions before 3 have no /ossify/quit - that path just gets proxied upstream - so fall
+    // back to killing the pid the health endpoint reports. Without this an old proxy survives
+    // and keeps answering, and the port stays busy for the replacement.
     await fetch(`http://127.0.0.1:${PROXY_PORT}/ossify/quit`).catch(() => {});
-    for (let i = 0; i < 20 && (await proxyUp()); i++) await new Promise((r) => setTimeout(r, 250));
+    for (let i = 0; i < 8 && (await proxyUp()); i++) await new Promise((r) => setTimeout(r, 250));
+    if (await proxyUp()) {
+      const stale = await proxyHealth();
+      if (stale?.pid) { try { process.kill(stale.pid); log(`stopped stale proxy pid ${stale.pid}`); } catch { /* already gone */ } }
+      for (let i = 0; i < 20 && (await proxyUp()); i++) await new Promise((r) => setTimeout(r, 250));
+    }
+    if (await proxyUp()) throw new Error(`could not replace the shim proxy on :${PROXY_PORT}. Close whatever holds that port and retry.`);
   }
-  const child = spawn(process.execPath, [script, "--port", String(PROXY_PORT), "--target", String(ctx.info.port)], { detached: true, stdio: "ignore", windowsHide: true });
-  child.unref();
-  for (let i = 0; i < 20; i++) { if (await proxyUp()) { log(`shim proxy started on :${PROXY_PORT} (pid ${child.pid})`); return; } await new Promise((r) => setTimeout(r, 250)); }
+  spawn(process.execPath, [script, "--port", String(PROXY_PORT), "--target", String(ctx.info.port)], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  // Confirm the *new* process answers, not a leftover: check the reported version, not just liveness.
+  for (let i = 0; i < 24; i++) {
+    const h = await proxyHealth();
+    if (h && h.version === PROXY_VERSION) { log(`shim proxy v${h.version} on :${PROXY_PORT} (pid ${h.pid})`); return; }
+    await new Promise((r) => setTimeout(r, 250));
+  }
   throw new Error(`shim proxy did not start on :${PROXY_PORT}`);
 }
 
@@ -258,6 +271,22 @@ const commands = {
 
   async unload() { const info = await ensureServer(log); await unloadAll(client(info.port), log); console.log("All models unloaded."); },
 
+  // Hard-clear the prompt cache by reloading the model with the same config. The proxy's
+  // per-conversation prefix should make this unnecessary; it is the escape hatch when a session
+  // has already been polluted, or when you want to be certain nothing older is resident.
+  async reset() {
+    const ctx = await analyze();
+    const loaded = await listLoaded(ctx.lms);
+    const mine = loaded.find((h) => h.modelKey === ctx.m.modelKey);
+    if (!mine) return console.log(`${ctx.m.modelKey} is not loaded - nothing cached.`);
+    if (!existsSync(currentPath)) return console.log("No record of how it was loaded. Run `ossify unload` then start again.");
+    const cur = JSON.parse(readFileSync(currentPath, "utf8"));
+    await ctx.lms.llm.unload(mine.identifier);
+    await settleMemory(10);
+    await load(ctx.lms, ctx.m.modelKey, cur.config, { ttl: ttl > 0 ? ttl : undefined });
+    console.log(`${ctx.m.modelKey} reloaded with an empty prompt cache (${cur.strategy}, ctx ${cur.contextLength}).`);
+  },
+
   async bench() {
     const ctx = await analyze();
     const loaded = await listLoaded(ctx.lms);
@@ -279,7 +308,7 @@ const commands = {
   },
 
   help() {
-    console.log(`ossify <up|tune|plan|status|unload|bench|doctor> [--model KEY] [--ctx N] [--ttl SEC] [--deep] [--quick] [--retune] [--keep-others]\n  default model ${DEFAULT_MODEL}, ctx ${ctxTarget}, ttl ${ttl}s`);
+    console.log(`ossify <up|tune|plan|status|unload|reset|bench|doctor> [--model KEY] [--ctx N] [--ttl SEC] [--ram-margin GB] [--deep] [--quick] [--retune] [--keep-others] [--keep-cache]\n  default model ${DEFAULT_MODEL}, ctx ${ctxTarget}, ttl ${ttl}s`);
   },
 };
 

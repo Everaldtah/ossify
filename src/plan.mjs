@@ -46,7 +46,10 @@ export function candidates(s, { budgetBytes, ramFreeBytes, ctxTarget = 65536, mi
   const ctxLadder = [ctxTarget, 98304, 65536, 49152, 32768, 24576, 16384].filter((c, i, a) => c >= minCtx && c <= (s.ctxTrain || 1e9) && c <= ctxTarget && a.indexOf(c) === i).sort((a, b) => b - a);
   const isMoe = s.nExpert > 1 && s.expertBytes > 0;
 
-  const base = { gpuRatio: 1, cpuExpertRatio: 0, contextLength: ctxTarget, kvType: "q8_0", flashAttention: true, evalBatchSize: 512, offloadKVCacheToGpu: true };
+  // numParallelSessions: LM Studio defaults to 4 slots. Claude Code is one conversation at a time,
+  // and extra slots only give the engine's prefix matcher more stale caches to pick from (see
+  // flushSlots in lmstudio.mjs). Two keeps a spare for a subagent without inviting the ping-pong.
+  const base = { gpuRatio: 1, cpuExpertRatio: 0, contextLength: ctxTarget, kvType: "q8_0", flashAttention: true, evalBatchSize: 512, offloadKVCacheToGpu: true, numParallelSessions: 2 };
 
   const fits = (cfg) => {
     const est = estimateVram(s, cfg);
@@ -121,6 +124,7 @@ export function toLmsConfig(cfg) {
     offloadKVCacheToGpu: cfg.offloadKVCacheToGpu,
     tryMmap: true,
     keepModelInMemory: cfg.keepModelInMemory ?? false,
+    numParallelSessions: cfg.numParallelSessions ?? 2,
   };
   if (cfg.cpuExpertRatio > 0) c.gpu.numCpuExpertLayersRatio = cfg.cpuExpertRatio >= 1 ? "max" : cfg.cpuExpertRatio;
   if (cfg.kvType && cfg.kvType !== "f16") { c.llamaKCacheQuantizationType = cfg.kvType; c.llamaVCacheQuantizationType = cfg.kvType; }

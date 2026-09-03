@@ -17,7 +17,57 @@ const PORT = parseInt(opt("port", process.env.OSSIFY_PROXY_PORT || "20130"), 10)
 const TARGET = parseInt(opt("target", process.env.OSSIFY_LMS_PORT || "1234"), 10);
 const DROP_FIELDS = ["thinking", "context_management", "output_config", "betas"];
 // Bump when the rewriting logic changes: `ossify up` replaces a running proxy whose version differs.
-export const PROXY_VERSION = 2;
+export const PROXY_VERSION = 3;
+
+// --- conversation isolation ------------------------------------------------------------------
+// LM Studio's HTTP API cannot pin a conversation to a prompt-cache slot: its engine logs
+// `slot selection: session_id=<empty> server-selected (LCP/LRU)` and then picks a slot by
+// longest-common-prefix similarity (threshold 0.100, scored against the CACHED prompt length).
+// Claude Code sends the same ~20k-token system prompt in every conversation, so a brand-new
+// conversation scores ~0.5-0.99 against a slot still holding a DIFFERENT conversation, takes it,
+// and rolls that KV cache back to where the two diverge. Neither model here can shift a KV cache
+// (gpt-oss uses sliding-window attention, Qwen3.5 has recurrent SSM layers; the engine logs
+// "shifting is not supported for this context"), so those rollbacks depend on context checkpoints
+// and can leave recurrent state that does not match the tokens. That is what surfaces as text
+// from an unrelated older conversation.
+//
+// Fix: give each conversation its own prefix. One short marker at the very front of the system
+// prompt makes the common prefix between two different conversations a handful of tokens out of
+// ~20k, which is far below the 0.100 threshold, so the engine takes a free slot and resets it
+// instead of inheriting. Within one conversation the marker is constant, so caching is untouched.
+function conversationKey(body) {
+  try {
+    const uid = body.metadata?.user_id;
+    if (typeof uid === "string") {
+      const m = uid.match(/"session_id"\s*:\s*"([^"]+)"/);
+      if (m) return m[1].slice(0, 16);
+      if (uid.length <= 64 && uid.trim()) return uid.trim().slice(0, 16);
+    }
+  } catch { /* fall through */ }
+  // No usable metadata: derive a stable id from the opening user turn, which is fixed for the
+  // life of a conversation and differs between conversations.
+  const first = Array.isArray(body.messages) ? body.messages.find((m) => m.role === "user") : null;
+  const text = typeof first?.content === "string" ? first.content
+    : Array.isArray(first?.content) ? first.content.map((b) => b?.text ?? "").join(" ") : "";
+  if (!text) return null;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return `fnv${h.toString(36)}`;
+}
+
+function isolateConversation(body) {
+  const key = conversationKey(body);
+  if (!key) return body;
+  const marker = `[conversation ${key}]\n`;
+  if (typeof body.system === "string") body.system = marker + body.system;
+  else if (Array.isArray(body.system) && body.system.length) {
+    const head = body.system[0];
+    if (head && head.type === "text" && typeof head.text === "string" && !head.text.startsWith("[conversation ")) {
+      body.system = [{ ...head, text: marker + head.text }, ...body.system.slice(1)];
+    }
+  } else if (body.system === undefined) body.system = [{ type: "text", text: marker.trim() }];
+  return body;
+}
 
 function normalizeMessages(body) {
   if (!Array.isArray(body.messages)) return body;
@@ -62,7 +112,7 @@ const server = http.createServer((req, res) => {
       return res.end(JSON.stringify({ input_tokens: n }));
     }
     if (req.method === "POST" && /\/v1\/messages/.test(url) && bodyBuf.length) {
-      try { bodyBuf = Buffer.from(JSON.stringify(normalizeMessages(JSON.parse(bodyBuf.toString("utf8")))), "utf8"); } catch { /* forward as-is */ }
+      try { bodyBuf = Buffer.from(JSON.stringify(isolateConversation(normalizeMessages(JSON.parse(bodyBuf.toString("utf8"))))), "utf8"); } catch { /* forward as-is */ }
     }
     const headers = { ...req.headers, host: `127.0.0.1:${TARGET}`, "content-length": String(bodyBuf.length) };
     delete headers["accept-encoding"]; // keep SSE plain
