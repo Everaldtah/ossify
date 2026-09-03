@@ -16,9 +16,16 @@ PS> gptoss --oss-unload         # free VRAM and RAM
 Plain `claude` is untouched: the provider environment is set only for the child process and
 restored afterwards.
 
-Verified end to end on the reference machine: `gptoss -p "read src/gguf.mjs and explain kvBytes"`
-completed a full two-turn agent loop (model calls `Read`, gets the file back, answers correctly)
-in 92 s, with 18,141 tokens served from LM Studio's prompt cache on the second turn.
+Both launchers are verified end to end on the reference machine. Each ran a real agent loop:
+the model calls `Read`, gets the file back, and answers correctly.
+
+| Launcher | Turns | Wall time | Tokens served from cache |
+|---|---|---|---|
+| `gptoss` | 2 | 92 s | 18,141 |
+| `qwen35` | 4 | 191 s | 72,752 |
+
+Most of that time is the first turn, where Claude Code's 18k-23k token system prompt is processed
+once. Later turns hit LM Studio's prompt cache and only process the delta.
 Claude Code prints a dollar cost and an `unrecognized_model` notice for local models; both are
 cosmetic, nothing leaves the machine and nothing is billed.
 
@@ -156,6 +163,10 @@ into RAM.
 - RAM budget = live free RAM - headroom (4 GB default, 2 GB for the Qwen launcher). The loader
   refuses rather than swaps.
 - Models auto-unload after 30 min idle (`--oss-ttl`), so a game launched later gets its VRAM back.
+  `gptoss --oss-unload` frees everything immediately.
+- Pick by weight: gpt-oss-20b holds ~10 GB resident and leaves the desktop comfortable.
+  Qwen3.5-35B-A3B holds ~19 GB and wants a quiet machine, which is why its launcher uses a 2 GB
+  RAM margin instead of 4. If it refuses to load, the error names how much to close.
 - The tuner never benchmarks a spilled load: if fewer than 200 MiB of VRAM remain after loading,
   the candidate is rejected immediately.
 
