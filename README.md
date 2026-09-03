@@ -108,7 +108,7 @@ terminals. Open a new terminal afterwards.
 | `... --oss-plan` | print the placement plan without loading |
 | `... --oss-bench` | benchmark whatever is loaded |
 | `... --oss-unload` | unload everything |
-| `... --oss-ctx N` | different context length (default 65536 for gpt-oss, 32768 for Qwen) |
+| `... --oss-ctx N` | different context length (default 65536) |
 | `... --oss-ttl SEC` | idle auto-unload (default 1800 s; `0` = keep loaded) |
 | `... --oss-quick` | first run without tuning (planner default) |
 | `... --oss-retune` | ignore the saved profile |
@@ -137,6 +137,15 @@ The launcher sets, for the child process only:
 - `ANTHROPIC_MODEL` and every `ANTHROPIC_DEFAULT_*_MODEL` / `CLAUDE_CODE_SUBAGENT_MODEL` to the loaded model's identifier (so LM Studio never JIT-loads a second copy with default settings)
 - `CLAUDE_CODE_AUTO_COMPACT_WINDOW = context - 8192`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192`, `API_TIMEOUT_MS=3600000`
 - clears `ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_OPENAI`, `OPENAI_*`, Bedrock/Vertex switches
+
+## Context length matters more than you think
+
+Claude Code's own system prompt plus tool definitions is 18k-23k tokens before your first
+question. A 32k context therefore leaves under 10k of working room and auto-compacts almost
+immediately, so both launchers default to **64k**. On hybrid-attention models this is nearly
+free: Qwen3.5 keeps a real KV cache on only 10 of its 40 layers (`full_attention_interval = 4`),
+so doubling the context costs about 340 MiB of VRAM, paid for by moving one more expert layer
+into RAM.
 
 ## Keeping the machine usable
 

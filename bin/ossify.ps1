@@ -1,6 +1,6 @@
 # Ossify launchers for Claude Code on local LM Studio models.
-#   gptoss   -> openai/gpt-oss-20b        (64k context)
-#   qwen35   -> qwen/qwen3.5-35b-a3b      (32k context, needs ~18 GB free RAM)
+#   gptoss   -> openai/gpt-oss-20b        (64k context, needs ~10 GB free RAM)
+#   qwen35   -> qwen/qwen3.5-35b-a3b      (64k context, needs ~21 GB free RAM)
 # Plain `claude` is untouched: provider env vars are set only for the child process and restored after.
 # Pure ASCII, no BOM on purpose (some AV engines lock BOM'd .ps1 files).
 
@@ -98,4 +98,4 @@ function Start-OssifyClaude($ProfileName, $Model, $DefaultCtx, $RamMarginGB, $Ar
 }
 
 function gptoss { Start-OssifyClaude 'gptoss' 'openai/gpt-oss-20b' 65536 4 $args }
-function qwen35 { Start-OssifyClaude 'qwen35' 'qwen/qwen3.5-35b-a3b' 32768 2 $args }
+function qwen35 { Start-OssifyClaude 'qwen35' 'qwen/qwen3.5-35b-a3b' 65536 2 $args }
