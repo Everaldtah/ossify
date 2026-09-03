@@ -95,10 +95,16 @@ export function candidates(s, { budgetBytes, ramFreeBytes, ctxTarget = 65536, mi
     }
   }
 
-  // Strategy D: CPU-only fallback (no/insufficient GPU).
+  // Strategy D: CPU-only fallback (no/insufficient GPU). Still subject to the RAM budget - an
+  // empty result means "does not fit in RAM", and the caller must refuse rather than swap.
   if (!out.length) {
-    const cfg = { ...base, gpuRatio: 0, cpuExpertRatio: 0, contextLength: Math.min(ctxTarget, 32768), offloadKVCacheToGpu: false };
-    out.push({ id: `cpu-only-c${cfg.contextLength / 1024}k`, strategy: "cpu-only", cfg, est: estimateVram(s, cfg) });
+    for (const ctx of ctxLadder.length ? ctxLadder : [minCtx]) {
+      const cfg = { ...base, gpuRatio: 0, cpuExpertRatio: 0, contextLength: ctx, offloadKVCacheToGpu: false };
+      const est = estimateVram(s, cfg);
+      if (estimateRam(s, cfg, est) + kvBytes(s, ctx, KV_BYTES[cfg.kvType], KV_BYTES[cfg.kvType]) <= ramFreeBytes) {
+        out.push({ id: `cpu-only-c${ctx / 1024}k`, strategy: "cpu-only", cfg, est }); break;
+      }
+    }
   }
   return out;
 }

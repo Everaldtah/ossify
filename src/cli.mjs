@@ -34,15 +34,32 @@ function fingerprint(sys, s, ctx) {
   return `${sys.gpu?.name ?? "cpu"}|${sys.gpu?.totalMiB ?? 0}|${sys.lmstudio.backend}|${s.totalBytes}|ctx${ctx}`;
 }
 
+function budgets(ctx) {
+  ctx.sys = snapshot();
+  ctx.budgetBytes = ctx.sys.gpu ? Math.max(0, (ctx.sys.gpu.freeMiB - VRAM_MARGIN_MIB) * MiB) : 0;
+  ctx.ramFreeBytes = Math.max(0, ctx.sys.ram.freeBytes - RAM_MARGIN);
+  return ctx;
+}
+
+// After an unload LM Studio takes several seconds to hand 10-20 GB back to Windows. Planning
+// against a snapshot taken during that window under-budgets RAM and picks a bad placement.
+async function settleMemory(maxSec = 25) {
+  let last = snapshot().ram.freeBytes;
+  for (let i = 0; i < maxSec; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    const now = snapshot().ram.freeBytes;
+    if (Math.abs(now - last) < 150 * MiB && i >= 2) break;
+    last = now;
+  }
+}
+
 async function analyze() {
-  const sys = snapshot();
   const info = await ensureServer(log);
   const lms = client(info.port);
+  const sys = snapshot();
   const m = await resolveModel(lms, modelKey, sys.lmstudio.modelsDir);
   const s = summarize(await readGguf(m.file));
-  const budgetBytes = sys.gpu ? Math.max(0, (sys.gpu.freeMiB - VRAM_MARGIN_MIB) * MiB) : 0;
-  const ramFreeBytes = Math.max(0, sys.ram.freeBytes - RAM_MARGIN);
-  return { sys, info, lms, m, s, budgetBytes, ramFreeBytes };
+  return budgets({ sys, info, lms, m, s });
 }
 
 function printPlan(ctx, cands) {
@@ -78,10 +95,19 @@ async function loadWith(ctx, cand, { ttl: t } = {}) {
   return model;
 }
 
+function needMoreRam(ctx) {
+  const minimal = candidates(ctx.s, { budgetBytes: ctx.budgetBytes, ramFreeBytes: Infinity, ctxTarget })[0];
+  const need = estimateRam(ctx.s, minimal.cfg, minimal.est) + RAM_MARGIN;
+  return `Not enough free RAM for ${ctx.m.modelKey}: needs ~${fmtGB(need)} free (incl. ${fmtGB(RAM_MARGIN)} headroom), have ${fmtGB(ctx.sys.ram.freeBytes)}. Close ~${fmtGB(need - ctx.sys.ram.freeBytes)} of apps (browsers, Discord, Notion, games) and retry, or lower --ram-margin.`;
+}
+
 async function runTune(ctx, { deep = false } = {}) {
-  const cands = candidates(ctx.s, { budgetBytes: ctx.budgetBytes, ramFreeBytes: ctx.ramFreeBytes, ctxTarget, deep });
-  printPlan(ctx, cands);
   await unloadAll(ctx.lms, log);
+  await settleMemory();
+  budgets(ctx);
+  const cands = candidates(ctx.s, { budgetBytes: ctx.budgetBytes, ramFreeBytes: ctx.ramFreeBytes, ctxTarget, deep });
+  if (!cands.length) throw new Error(needMoreRam(ctx));
+  printPlan(ctx, cands);
   const results = [];
   for (const cand of cands) {
     try {
@@ -105,7 +131,8 @@ async function runTune(ctx, { deep = false } = {}) {
       const b2 = await bench(model, { promptTokens: 1800, maxTokens: 160 });
       const b = { ppTps: Math.max(b1.ppTps, b2.ppTps), tgTps: Math.max(b1.tgTps, b2.tgTps), ttftSec: Math.min(b1.ttftSec, b2.ttftSec), numGpuLayers: b2.numGpuLayers, promptTokens: b2.promptTokens };
       const gpuAfter = snapshot().gpu;
-      const score = turnSeconds(b);
+      // q4_0 KV cache trades accuracy over long contexts for speed: only let it win when clearly faster.
+      const score = turnSeconds(b) * (cand.strategy.includes("kvq4") ? 1.15 : 1);
       results.push({ id: cand.id, strategy: cand.strategy, cfg: cand.cfg, est: cand.est, bench: b, score, vramUsedMiB: gpuAfter?.usedMiB });
       console.log(`  ${cand.id.padEnd(34)} prefill ${b.ppTps.toFixed(0).padStart(5)} tok/s   gen ${b.tgTps.toFixed(1).padStart(5)} tok/s   turn ${score.toFixed(1)}s   vram-used ${gpuAfter ? fmtMiB(gpuAfter.usedMiB) : "?"}`);
       await ctx.lms.llm.unload(model.identifier);
@@ -137,7 +164,12 @@ function writeCurrent(ctx, cand, extra = {}) {
 }
 
 const commands = {
-  async plan() { const ctx = await analyze(); printPlan(ctx, candidates(ctx.s, { budgetBytes: ctx.budgetBytes, ramFreeBytes: ctx.ramFreeBytes, ctxTarget, deep: flag("deep") })); },
+  async plan() {
+    const ctx = await analyze();
+    const cands = candidates(ctx.s, { budgetBytes: ctx.budgetBytes, ramFreeBytes: ctx.ramFreeBytes, ctxTarget, deep: flag("deep") });
+    printPlan(ctx, cands);
+    if (!cands.length) console.log("  (nothing fits)  " + needMoreRam(ctx));
+  },
 
   async tune() { const ctx = await analyze(); await runTune(ctx, { deep: flag("deep") }); },
 
@@ -153,11 +185,16 @@ const commands = {
         return;
       }
     }
-    if (!flag("keep-others")) await unloadOthers(ctx, null);
+    if (!flag("keep-others") && loaded.length) { await unloadOthers(ctx, null); await settleMemory(); }
+    budgets(ctx);
     let tuned = flag("retune") ? null : readTuned(ctx);
     let cand;
     if (tuned) { cand = tuned.chosen; log(`Using tuned profile ${cand.id} (${cand.bench.tgTps.toFixed(1)} tok/s gen, tuned ${tuned.tunedAt.slice(0, 10)})`); }
-    else if (flag("quick")) { cand = candidates(ctx.s, { budgetBytes: ctx.budgetBytes, ramFreeBytes: ctx.ramFreeBytes, ctxTarget })[0]; log(`No tuned profile - using planner default ${cand.id}`); }
+    else if (flag("quick")) {
+      cand = candidates(ctx.s, { budgetBytes: ctx.budgetBytes, ramFreeBytes: ctx.ramFreeBytes, ctxTarget })[0];
+      if (!cand) throw new Error(needMoreRam(ctx));
+      log(`No tuned profile - using planner default ${cand.id}`);
+    }
     else { log("No tuned profile for this machine/model/context yet - running the auto-tuner once (a few minutes). Use --quick to skip."); tuned = await runTune(ctx); cand = tuned.chosen; }
     // Preflight against the *current* free memory, not the tuning-time numbers.
     const est = estimateVram(ctx.s, cand.cfg);
