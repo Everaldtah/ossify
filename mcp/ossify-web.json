@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ossify-web": {
+      "command": "node",
+      "args": ["OSSIFY_ROOT/mcp/web.mjs"]
+    }
+  }
+}

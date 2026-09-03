@@ -19,6 +19,8 @@ function Show-OssifyHelp($name, $model) {
     Write-Host "  $name --oss-bench         benchmark the currently loaded model"
     Write-Host "  $name --oss-unload        unload everything, free VRAM and RAM"
     Write-Host "  $name --oss-reset         reload with an empty prompt cache (if replies quote an older chat)"
+    Write-Host "  $name --oss-web 'query'   test the web tools without starting Claude Code"
+    Write-Host "  $name --oss-no-web        start without the web tools"
     Write-Host "  $name --oss-quick         skip auto-tune on first run (planner default)"
     Write-Host "  $name --oss-retune        ignore the saved profile and tune again"
     Write-Host "  $name --oss-ttl 0         keep the model loaded forever (default: unload after 30 min idle)"
@@ -31,7 +33,7 @@ function Start-OssifyClaude($ProfileName, $Model, $DefaultCtx, $RamMarginGB, $Ar
     if (-not (Test-Path $cli)) { Write-Host "[ossify] cli not found at $cli - run install.ps1 from the ossify repo" -ForegroundColor Red; return }
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Host "[ossify] node.exe not on PATH (need Node 20+)" -ForegroundColor Red; return }
 
-    $ctx = $DefaultCtx; $ttl = 1800; $cmd = $null; $extra = @(); $passthru = @()
+    $ctx = $DefaultCtx; $ttl = 1800; $cmd = $null; $extra = @(); $passthru = @(); $NoWeb = $false
     $list = @($ArgList)
     for ($i = 0; $i -lt $list.Count; $i++) {
         switch ($list[$i]) {
@@ -45,17 +47,41 @@ function Start-OssifyClaude($ProfileName, $Model, $DefaultCtx, $RamMarginGB, $Ar
             '--oss-plan'   { $cmd = 'plan' }
             '--oss-bench'  { $cmd = 'bench' }
             '--oss-doctor' { $cmd = 'doctor' }
+            '--oss-no-web' { $NoWeb = $true }
+            '--oss-web'    { $cmd = 'web' }
             '--oss-quick'  { $extra += '--quick' }
             '--oss-retune' { $extra += '--retune' }
             '--oss-help'   { Show-OssifyHelp $ProfileName $Model; return }
             default        { $passthru += $list[$i] }
         }
     }
+    if ($cmd -eq 'web') { & node (Join-Path $script:OssifyRoot "mcp\web.mjs") --selftest @passthru; return }
     $common = @('--model', $Model, '--ctx', "$ctx", '--ttl', "$ttl", '--ram-margin', "$RamMarginGB") + $extra
     if ($cmd) { & node $cli $cmd @common; return }
 
     & node $cli up @common
     if ($LASTEXITCODE -ne 0) { Write-Host "[ossify] model is not loaded - not starting Claude Code." -ForegroundColor Red; return }
+
+    # Web tools. Claude Code's built-in WebSearch runs server-side at Anthropic, so it returns
+    # nothing against a local model. These MCP tools run on this machine instead, so they work.
+    # Generated per launch because the config needs this repo's absolute path.
+    if (-not $NoWeb) {
+        $mcpSrc = Join-Path $script:OssifyRoot "mcp\ossify-web.json"
+        if (Test-Path $mcpSrc) {
+            $mcpOut = Join-Path $env:USERPROFILE ".ossify\mcp-web.json"
+            $root = $script:OssifyRoot -replace '\\', '/'
+            (Get-Content $mcpSrc -Raw).Replace('OSSIFY_ROOT', $root) | Set-Content -Path $mcpOut -Encoding Ascii
+            $passthru = @('--mcp-config', $mcpOut) + $passthru
+        }
+    }
+
+    # Claude Code's built-in WebSearch is executed by Anthropic's API, so against a local model it
+    # returns nothing: measured here, the model burned 3 turns and 6 minutes before giving up.
+    # Hide it so the model reaches for the MCP web tools instead. WebFetch is fetched client-side
+    # and does work, so it stays. Skipped if the caller passes its own --disallowedTools.
+    if (-not ($passthru -contains '--disallowedTools' -or $passthru -contains '--disallowed-tools')) {
+        $passthru = @('--disallowedTools', 'WebSearch') + $passthru
+    }
 
     $cur = Get-Content (Join-Path $env:USERPROFILE ".ossify\current.json") -Raw | ConvertFrom-Json
     $compact = [Math]::Max(16384, [int]$cur.contextLength - 8192)

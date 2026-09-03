@@ -119,6 +119,8 @@ terminals. Open a new terminal afterwards.
 | `... --oss-bench` | benchmark whatever is loaded |
 | `... --oss-unload` | unload everything |
 | `... --oss-reset` | reload the model with an empty prompt cache (see below) |
+| `... --oss-web "query"` | exercise the web tools without starting Claude Code |
+| `... --oss-no-web` | start without the web tools |
 | `... --oss-ctx N` | different context length (default 65536) |
 | `... --oss-ttl SEC` | idle auto-unload (default 1800 s; `0` = keep loaded) |
 | `... --oss-quick` | first run without tuning (planner default) |
@@ -148,6 +150,51 @@ The launcher sets, for the child process only:
 - `ANTHROPIC_MODEL` and every `ANTHROPIC_DEFAULT_*_MODEL` / `CLAUDE_CODE_SUBAGENT_MODEL` to the loaded model's identifier (so LM Studio never JIT-loads a second copy with default settings)
 - `CLAUDE_CODE_AUTO_COMPACT_WINDOW = context - 8192`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192`, `API_TIMEOUT_MS=3600000`
 - clears `ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_OPENAI`, `OPENAI_*`, Bedrock/Vertex switches
+
+## Internet access
+
+Claude Code's built-in **WebSearch runs server-side at Anthropic**, so it returns nothing when the
+model is local. Measured here: gpt-oss burned 3 turns and 6 minutes before reporting it could not
+retrieve results. Ossify therefore ships its own web tools as a local MCP server, which Claude
+Code executes on this machine and feeds back as tool output, so they work with any backend.
+
+Three tools, added automatically when you type `gptoss` or `qwen35`:
+
+| tool | what it does |
+|---|---|
+| `web_search` | search the web, get a numbered list of title, URL and snippet |
+| `web_fetch` | fetch one page and return its readable text, HTML stripped, with `offset` paging |
+| `web_research` | search **and** read the top pages in a single call |
+
+`web_research` exists because turns are expensive on a local model: each extra tool round-trip
+pays another prefill. Collapsing search-then-read-then-read into one call is a large speed win, so
+the tool description tells the model to prefer it.
+
+The extractor is dependency-free and tuned for small context windows. It prefers the page's
+`<main>` or `<article>` region, strips scripts, nav, headers and footers, decodes entities, and
+then removes navigation menus, which survive tag-stripping as long runs of very short lines. Text
+is capped per call (5,000 characters by default, 3,000 per page for research) because every
+returned token costs prefill time: at gpt-oss's 290 tok/s, 5k tokens of page text is about 17
+seconds before the model starts answering.
+
+`WebFetch`, Claude Code's built-in, **does** work locally because it fetches client-side, so it is
+left enabled. `WebSearch` is disabled in both launchers so the model does not waste turns on it.
+
+The first time a session calls a web tool, Claude Code asks for permission, as it does for any MCP
+tool. Choose "always allow" if you would rather not be asked again. Ossify does not modify your
+settings to pre-approve internet access.
+
+Verified end to end on both models. gpt-oss searched, read a page and cited its source in 128
+seconds over two turns.
+
+```powershell
+gptoss --oss-web "rust borrow checker"   # exercise the tools without starting Claude Code
+gptoss --oss-no-web                      # start without them
+```
+
+Search uses DuckDuckGo by default, no key required. Set `BRAVE_API_KEY`, `TAVILY_API_KEY` or
+`SERPER_API_KEY` in your environment to use a better backend; the first one present wins, and any
+failure falls back to DuckDuckGo.
 
 ## Benchmarking your own setup
 
@@ -264,6 +311,8 @@ src/plan.mjs     VRAM/RAM planner and candidate generator
 src/gguf.mjs     GGUF header reader (tensor sizes, KV geometry)
 src/lmstudio.mjs LM Studio driver (server, resolve, load with raw-field injection, benchmark)
 src/proxy.mjs    shim proxy on :20130 (Anthropic request fixups, streamed through)
+mcp/web.mjs      web_search / web_fetch / web_research as a local MCP server
+bench/           coding and tool-calling benchmark (run.mjs, tasks.json, fixtures/)
 src/sys.mjs      hardware probe (nvidia-smi, RAM, CPU, LM Studio settings)
 install.ps1      installer
 ```
