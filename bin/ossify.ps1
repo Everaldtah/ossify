@@ -18,6 +18,7 @@ function Show-OssifyHelp($name, $model) {
     Write-Host "  $name --oss-plan          show what the planner would do without loading"
     Write-Host "  $name --oss-bench         benchmark the currently loaded model"
     Write-Host "  $name --oss-unload        unload everything, free VRAM and RAM"
+    Write-Host "  $name --oss-reset         reload with an empty prompt cache (if replies quote an older chat)"
     Write-Host "  $name --oss-quick         skip auto-tune on first run (planner default)"
     Write-Host "  $name --oss-retune        ignore the saved profile and tune again"
     Write-Host "  $name --oss-ttl 0         keep the model loaded forever (default: unload after 30 min idle)"
@@ -40,6 +41,7 @@ function Start-OssifyClaude($ProfileName, $Model, $DefaultCtx, $RamMarginGB, $Ar
             '--oss-deep'   { $cmd = 'tune'; $extra += '--deep' }
             '--oss-status' { $cmd = 'status' }
             '--oss-unload' { $cmd = 'unload' }
+            '--oss-reset'  { $cmd = 'reset' }
             '--oss-plan'   { $cmd = 'plan' }
             '--oss-bench'  { $cmd = 'bench' }
             '--oss-doctor' { $cmd = 'doctor' }

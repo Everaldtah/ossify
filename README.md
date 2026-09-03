@@ -118,6 +118,7 @@ terminals. Open a new terminal afterwards.
 | `... --oss-plan` | print the placement plan without loading |
 | `... --oss-bench` | benchmark whatever is loaded |
 | `... --oss-unload` | unload everything |
+| `... --oss-reset` | reload the model with an empty prompt cache (see below) |
 | `... --oss-ctx N` | different context length (default 65536) |
 | `... --oss-ttl SEC` | idle auto-unload (default 1800 s; `0` = keep loaded) |
 | `... --oss-quick` | first run without tuning (planner default) |
@@ -148,6 +149,39 @@ The launcher sets, for the child process only:
 - `CLAUDE_CODE_AUTO_COMPACT_WINDOW = context - 8192`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192`, `API_TIMEOUT_MS=3600000`
 - clears `ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_OPENAI`, `OPENAI_*`, Bedrock/Vertex switches
 
+## Benchmarking your own setup
+
+`bench/` scores a model's coding and tool-calling ability **through the real Claude Code harness**,
+not through a raw API call, so the number reflects what you actually get when you type `gptoss`.
+
+```powershell
+gptoss --oss-status          # make sure a model is loaded
+node bench\run.mjs           # all tasks
+node bench\run.mjs --group tools     # tools | coding | instruction
+node bench\run.mjs --only code-bugfix
+node bench\run.mjs --repeat 3        # these models are not deterministic
+```
+
+Fourteen tasks in three groups, weighted by difficulty:
+
+- **tools** - read a file, glob, grep, a multi-step find-then-read, write a new file, and edit an
+  existing one. These fail if the model narrates instead of calling the tool.
+- **coding** - fizzbuzz, a parser with fiddly rules, a real bug fix in a fixture, edge cases with
+  an exception path, adding a method without breaking existing behaviour, and Roman numerals.
+- **instruction** - exact output formatting, and refusing to invent a constant that is not in the
+  file (a hallucination probe).
+
+Grading is objective, never model-judged. Code tasks are executed: the runner imports what the
+model wrote and asserts on real return values. Tool tasks check the file that was actually created
+or edited. Each task runs as its own Claude Code session so tasks cannot contaminate each other,
+which does mean each pays a full first-turn prefill - budget roughly 20-30 minutes for a full run
+on gpt-oss. Results are written to `bench/result-<model>-<timestamp>.json`.
+
+To add your own task, append to `bench/tasks.json`. A check can assert on the answer text
+(`answerMatches`, `answerNotMatches`), on a file being created (`fileExists`), or by running
+Python against the model's output (`python`). `OUTDIR` in a prompt is replaced with a scratch
+directory unique to that task.
+
 ## Context length matters more than you think
 
 Claude Code's own system prompt plus tool definitions is 18k-23k tokens before your first
@@ -156,6 +190,41 @@ immediately, so both launchers default to **64k**. On hybrid-attention models th
 free: Qwen3.5 keeps a real KV cache on only 10 of its 40 layers (`full_attention_interval = 4`),
 so doubling the context costs about 340 MiB of VRAM, paid for by moving one more expert layer
 into RAM.
+
+## Why conversations used to bleed into each other
+
+Symptom: in a longer session the model starts referring to things from an unrelated earlier
+conversation. The cause is in LM Studio's prompt cache, and the engine log spells it out:
+
+```
+LlamaV4::predict slot selection: session_id=<empty> server-selected (LCP/LRU)
+slot get_availabl: selected slot by LCP similarity, sim_best = 0.991 (> 0.100 thold)
+```
+
+LM Studio's HTTP API has no way to say which conversation a request belongs to, so the engine
+guesses: it picks the cache slot with the longest common prefix, with a threshold of 0.100, scored
+against the **cached** prompt's length. Every Claude Code conversation opens with the same ~20k
+token system prompt, so a brand-new conversation scores 0.5-0.99 against a slot still holding a
+different conversation, takes that slot, and rolls its KV cache back to where the two diverge.
+
+Neither model can roll a KV cache back cleanly. gpt-oss uses sliding-window attention and Qwen3.5
+has recurrent SSM layers, so the engine logs `shifting is not supported for this context` and
+falls back to periodic state checkpoints. When the rollback lands between checkpoints, the
+restored state does not match the tokens, and residue of the older conversation leaks into the
+output. In one captured session a new conversation reused a slot holding 36,980 tokens of an
+older one, keeping only the first 20,043.
+
+The fix is in the shim proxy: it derives a stable id for each conversation (Claude Code's own
+session id, or a hash of the opening message) and puts a one-line marker at the very front of the
+system prompt. Two different conversations now share only a handful of tokens out of ~20k, far
+below the 0.100 threshold, so the engine takes a free slot and starts clean instead of inheriting.
+Within a single conversation the marker never changes, so caching is completely unaffected.
+
+Verified against the engine log: the second turn of one conversation still scores `sim_best =
+1.000` and reuses its cache, while a different conversation sending a byte-identical prompt is now
+assigned by LRU with no match at all.
+
+If a session has already gone bad, `gptoss --oss-reset` reloads the model with an empty cache.
 
 ## Keeping the machine usable
 
